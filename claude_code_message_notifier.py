@@ -88,18 +88,33 @@ class ClaudeCodeMessageNotifier:
         Returns:
             bool: Tools出力の場合True
         """
-        # テキストがない場合、toolsまたはメタデータの可能性が高い
-        if message_text is None:
-            # AssistantMessageでToolブロックが含まれる場合
-            if isinstance(message, AssistantMessage):
-                return any(
-                    isinstance(block, (ToolUseBlock, ToolResultBlock))
-                    for block in message.content
-                )
-            # その他のメタデータメッセージもtoolsとして扱う
+        # AssistantMessageでToolブロックが含まれる場合は常にtools
+        if isinstance(message, AssistantMessage):
+            has_tool_blocks = any(
+                isinstance(block, (ToolUseBlock, ToolResultBlock))
+                for block in message.content
+            )
+            if has_tool_blocks:
+                return True
+
+        # UserMessageでcontentがlistの場合（tool_resultなど）
+        if hasattr(message, 'content') and isinstance(message.content, list):
             return True
 
-        # テキストがある場合は通常のメッセージ
+        # メッセージテキストがJSONデータの場合
+        if message_text and (
+            message_text.strip().startswith('[') or
+            message_text.strip().startswith('{') or
+            '"type":' in message_text or
+            '"tool_use_id":' in message_text
+        ):
+            return True
+
+        # テキストがない場合、toolsまたはメタデータの可能性が高い
+        if message_text is None:
+            return True
+
+        # 通常のテキストメッセージ
         return False
 
     def get_pending_tools_notification(self) -> Optional[str]:
