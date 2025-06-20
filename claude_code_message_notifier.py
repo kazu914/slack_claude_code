@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Claude Code メッセージ通知制御クラス
+Claude Code message notification control class
 
-Tools出力の頻繁な通知を制御し、適切なタイミングでSlackに通知を行う
+Controls frequent tool output notifications and sends Slack notifications at appropriate timing
 """
 
 from typing import List, Optional
@@ -19,26 +19,26 @@ from message_utils import extract_message_text
 
 class ClaudeCodeMessageNotifier:
     """
-    Claude Codeからのメッセージを制御し、tools出力の通知頻度を調整するクラス
+    A class that controls messages from Claude Code and adjusts tool output notification frequency
 
-    Tools出力は即座に通知せず、以下の条件で通知を行う：
-    - Tools以外の出力が発生したとき
-    - Toolsの出力が連続で10回続いたとき
+    Tool outputs are not notified immediately, but notifications are sent under these conditions:
+    - When non-tool output occurs
+    - When tool outputs continue consecutively for 10 times
     """
 
     def __init__(self) -> None:
-        """初期化"""
+        """Initialize"""
         self.tools_count = 0
 
     def process_message(self, message: Message) -> List[str]:
         """
-        メッセージを処理し、Slackに送信すべきメッセージリストを返す
+        Process a message and return a list of messages to send to Slack
 
         Args:
-            message: Claude Code SDKのMessageオブジェクト
+            message: Claude Code SDK Message object
 
         Returns:
-            List[str]: Slackに送信すべきメッセージのリスト
+            List[str]: List of messages to send to Slack
         """
         message_text = extract_message_text(message)
 
@@ -48,28 +48,28 @@ class ClaudeCodeMessageNotifier:
             return self._handle_non_tools_message(message_text)
 
     def _handle_tools_message(self) -> List[str]:
-        """Tools メッセージを処理"""
+        """Process tools message"""
         self.tools_count += 1
 
         if self.tools_count % 10 == 0:
-            # 10の倍数になった場合、通知して リセット
+            # When it becomes a multiple of 10, notify and reset
             count = self.tools_count
             self.tools_count = 0
-            return [f"{count}回toolsを使用しました"]
+            return [f"Used tools {count} times"]
 
-        # まだ通知しない
+        # Don't notify yet
         return []
 
     def _handle_non_tools_message(self, message_text: Optional[str]) -> List[str]:
-        """Tools以外のメッセージを処理"""
+        """Process non-tools message"""
         messages_to_send = []
 
-        # 蓄積されたtools通知がある場合、先に送信
+        # If there are accumulated tool notifications, send them first
         if self.tools_count > 0:
-            messages_to_send.append(f"{self.tools_count}回toolsを使用しました")
+            messages_to_send.append(f"Used tools {self.tools_count} times")
             self.tools_count = 0
 
-        # 現在のメッセージがテキストを含む場合、追加
+        # If current message contains text, add it
         if message_text:
             messages_to_send.append(message_text)
 
@@ -79,16 +79,16 @@ class ClaudeCodeMessageNotifier:
         self, message: Message, message_text: Optional[str]
     ) -> bool:
         """
-        メッセージがtools出力かどうかを判定
+        Determine if a message is tool output
 
         Args:
-            message: Claude Code SDKのMessageオブジェクト
-            message_text: 抽出されたメッセージテキスト
+            message: Claude Code SDK Message object
+            message_text: Extracted message text
 
         Returns:
-            bool: Tools出力の場合True
+            bool: True if it's tool output
         """
-        # AssistantMessageでToolブロックが含まれる場合は常にtools
+        # Always tools if AssistantMessage contains Tool blocks
         if isinstance(message, AssistantMessage):
             has_tool_blocks = any(
                 isinstance(block, (ToolUseBlock, ToolResultBlock))
@@ -97,11 +97,11 @@ class ClaudeCodeMessageNotifier:
             if has_tool_blocks:
                 return True
 
-        # UserMessageでcontentがlistの場合（tool_resultなど）
+        # If UserMessage has content as list (tool_result, etc.)
         if hasattr(message, 'content') and isinstance(message.content, list):
             return True
 
-        # メッセージテキストがJSONデータの場合
+        # If message text is JSON data
         if message_text and (
             message_text.strip().startswith('[') or
             message_text.strip().startswith('{') or
@@ -110,31 +110,31 @@ class ClaudeCodeMessageNotifier:
         ):
             return True
 
-        # テキストがない場合、toolsまたはメタデータの可能性が高い
+        # If there's no text, it's likely tools or metadata
         if message_text is None:
             return True
 
-        # 通常のテキストメッセージ
+        # Normal text message
         return False
 
     def get_pending_tools_notification(self) -> Optional[str]:
         """
-        未送信のtools通知があれば取得する（処理完了時などに使用）
+        Get pending tool notification if available (used when processing is complete, etc.)
 
         Returns:
-            Optional[str]: 未送信のtools通知メッセージ。なければNone
+            Optional[str]: Pending tool notification message. None if none exists
         """
         if self.tools_count > 0:
             count = self.tools_count
             self.tools_count = 0
-            return f"{count}回toolsを使用しました"
+            return f"Used tools {count} times"
         return None
 
     def reset_count(self) -> None:
-        """Toolsカウントをリセット"""
+        """Reset tools count"""
         self.tools_count = 0
 
     @property
     def current_tools_count(self) -> int:
-        """現在のtoolsカウント数を取得"""
+        """Get current tools count"""
         return self.tools_count

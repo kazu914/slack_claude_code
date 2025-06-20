@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Code SDK Messageオブジェクト用のユーティリティ関数
+Utility functions for Claude Code SDK Message objects
 """
 
 import json
@@ -22,39 +22,39 @@ def extract_message_text(
     message: Message, include_tool_info: bool = False
 ) -> Optional[str]:
     """
-    Claude Code SDKのMessageオブジェクトからテキスト部分を抽出する
+    Extract text portion from Claude Code SDK Message object
 
     Args:
-        message: Claude Code SDKのMessageオブジェクト
-        include_tool_info: ツール使用情報を含めるかどうか
+        message: Claude Code SDK Message object
+        include_tool_info: Whether to include tool usage information
 
     Returns:
-        抽出されたテキスト文字列。テキストが含まれていない場合はNone
+        Extracted text string. None if no text is contained
     """
 
     if isinstance(message, UserMessage):
-        # UserMessageの場合、contentフィールドを適切に処理
+        # For UserMessage, properly handle the content field
         if isinstance(message.content, str):
             return message.content
         elif isinstance(message.content, list):
-            # リストの場合はJSONとして返す（tool_resultなど）
+            # For lists, return as JSON (tool_result, etc.)
             return json.dumps(message.content, ensure_ascii=False, indent=2)
         else:
             return str(message.content)
 
     elif isinstance(message, AssistantMessage):
-        # AssistantMessageの場合、contentはContentBlockのリスト
+        # For AssistantMessage, content is a list of ContentBlocks
         text_parts = []
 
         for content_block in message.content:
             if isinstance(content_block, TextBlock):
-                # TextBlockの場合、textフィールドにテキストが含まれている
+                # For TextBlock, text is contained in the text field
                 text_parts.append(content_block.text)
             elif isinstance(content_block, ToolUseBlock):
-                # ToolUseBlockの場合、ツール使用の情報を文字列化
+                # For ToolUseBlock, stringify tool usage information
                 if include_tool_info:
                     tool_info = f"[Tool: {content_block.name}({content_block.id})]"
-                    # inputが重要な場合は追加
+                    # Add input if important
                     if content_block.input:
                         input_json = json.dumps(
                             content_block.input, ensure_ascii=False
@@ -62,7 +62,7 @@ def extract_message_text(
                         tool_info += f" Input: {input_json}"
                     text_parts.append(tool_info)
             elif isinstance(content_block, ToolResultBlock):
-                # ToolResultBlockの場合、結果の内容を取得
+                # For ToolResultBlock, get result content
                 if content_block.content and include_tool_info:
                     if isinstance(content_block.content, str):
                         text_parts.append(f"[Tool Result: {content_block.content}]")
@@ -75,14 +75,14 @@ def extract_message_text(
         return "\n".join(text_parts) if text_parts else None
 
     elif isinstance(message, SystemMessage):
-        # SystemMessageは通常表示しない（初期化情報など）
+        # SystemMessage is usually not displayed (initialization info, etc.)
         if include_tool_info:
             return f"[System: {message.subtype}]"
         else:
             return None
 
     elif isinstance(message, ResultMessage):
-        # ResultMessageの場合、resultフィールドの内容を返す
+        # For ResultMessage, return the content of the result field
         if message.result:
             return message.result
         elif include_tool_info:
@@ -94,7 +94,7 @@ def extract_message_text(
             return None
 
     else:
-        # 未知のMessageタイプの場合
+        # For unknown Message types
         if include_tool_info:
             return f"[Unknown Message Type: {type(message).__name__}]"
         else:

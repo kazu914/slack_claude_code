@@ -149,7 +149,7 @@ class SlackSocketMonitor:
                 client,
                 channel_id,
                 thread_ts,
-                "指示を確認しました。処理を開始します...",
+                "Instructions confirmed. Starting processing...",
             )
 
             # Process the request with Claude Code
@@ -198,7 +198,7 @@ class SlackSocketMonitor:
             # Execute Claude Code query with robust error handling
             try:
                 async for message in query(
-                    prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
+                    prompt=f"Follow the user instructions received in Slack.\n\nUser instructions:\n{user_text}",
                     options=options,
                 ):
                     # Process message with notifier
@@ -230,8 +230,8 @@ class SlackSocketMonitor:
                     client,
                     channel_id,
                     thread_ts,
-                    "⚠️ 処理中にデータ解析エラーが発生しましたが、"
-                    "部分的な結果をお送りします。"
+                    "⚠️ A data parsing error occurred during processing, "
+                    "but partial results will be provided."
                 )
 
                 # Don't re-raise - continue with partial results
@@ -241,8 +241,8 @@ class SlackSocketMonitor:
                     client,
                     channel_id,
                     thread_ts,
-                    "❌ Claude Codeとの接続でエラーが発生しました。"
-                    "しばらく待ってから再試行してください。"
+                    "❌ An error occurred connecting to Claude Code. "
+                    "Please wait and try again."
                 )
                 return  # Cannot continue without connection
             except CLINotFoundError as e:
@@ -251,8 +251,8 @@ class SlackSocketMonitor:
                     client,
                     channel_id,
                     thread_ts,
-                    "❌ Claude Code CLIが見つかりません。"
-                    "インストールを確認してください。"
+                    "❌ Claude Code CLI not found. "
+                    "Please check the installation."
                 )
                 return  # Cannot continue without CLI
             except ProcessError as e:
@@ -267,9 +267,9 @@ class SlackSocketMonitor:
                     client,
                     channel_id,
                     thread_ts,
-                    f"⚠️ Claude Codeプロセスでエラーが発生しました"
-                    f"（終了コード: {e.exit_code}）。"
-                    "部分的な結果をお送りします。"
+                    f"⚠️ An error occurred in the Claude Code process "
+                    f"(exit code: {e.exit_code}). "
+                    "Partial results will be provided."
                 )
                 # Continue with partial results
 
@@ -334,18 +334,18 @@ class SlackSocketMonitor:
         except FileNotFoundError:
             self.logger.warning("system_prompt.md not found, using fallback prompt")
             return f"""
-slackに来ているユーザーの指示に従ってください.
-対象のスレッドは {thread_ts} です。
-ユーザーID: {user_id}
-チャンネルID: {channel_id}
+Follow the user instructions received in Slack.
+Target thread is {thread_ts}.
+User ID: {user_id}
+Channel ID: {channel_id}
 """
         except Exception as e:
             self.logger.error(f"Error loading system prompt: {e}")
             return f"""
-slackに来ているユーザーの指示に従ってください.
-対象のスレッドは {thread_ts} です。
-ユーザーID: {user_id}
-チャンネルID: {channel_id}
+Follow the user instructions received in Slack.
+Target thread is {thread_ts}.
+User ID: {user_id}
+Channel ID: {channel_id}
 """
 
     def _load_channel_configs(self) -> Dict[str, Any]:
@@ -442,14 +442,14 @@ slackに来ているユーザーの指示に従ってください.
 
     def _add_auto_send_prefix(self, message: str) -> str:
         """Add auto-send prefix to distinguish Python-generated messages."""
-        return f"【自動送信】{message}"
+        return f"[Auto-sent] {message}"
 
     async def _send_claude_code_completion_notification(
         self, client: Any, channel_id: str, thread_ts: str, message_count: int
     ) -> None:
         """Send notification when Claude Code processing is completed"""
         try:
-            completion_message = "✅ Claude Code処理が完了しました"
+            completion_message = "✅ Claude Code processing completed"
 
             await self._send_thread_reply(
                 client,
@@ -494,19 +494,19 @@ slackに来ているユーザーの指示に従ってください.
         """Send detailed error information to Slack"""
         try:
             # Create a user-friendly error message
-            error_message = f"""🚨 **エラーが発生しました**
+            error_message = f"""🚨 **An error occurred**
 
-**エラータイプ**: {error_details["error_type"]}
-**エラーメッセージ**: {error_details["error_message"]}
-**発生場所**: {error_details["function"]}
+**Error Type**: {error_details["error_type"]}
+**Error Message**: {error_details["error_message"]}
+**Location**: {error_details["function"]}
 
-**詳細情報**:
+**Details**:
 ```
-{error_details.get("context", "コンテキスト情報なし")}
+{error_details.get("context", "No context information available")}
 ```
 
-詳細なスタックトレースはログファイルに記録されています。
-ログファイル: `logs/slack_monitor_{datetime.now().strftime("%Y%m%d")}.log`"""
+Detailed stack trace has been logged to the log file.
+Log file: `logs/slack_monitor_{datetime.now().strftime("%Y%m%d")}.log`"""
 
             # Send to Slack through _send_thread_reply (auto-prefix will be added)
             response = await self._send_thread_reply(
@@ -527,7 +527,7 @@ slackに来ているユーザーの指示に従ってください.
             try:
                 error_type = error_details["error_type"]
                 error_message = error_details["error_message"]
-                simple_error = f"エラーが発生しました: {error_type} - {error_message}"
+                simple_error = f"An error occurred: {error_type} - {error_message}"
                 await self._send_thread_reply(
                     client,
                     channel_id,
