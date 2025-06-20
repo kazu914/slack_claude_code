@@ -1,3 +1,6 @@
 .env
 channel_configs.json
 system_prompt.md
+
+__pycache__
+logs
