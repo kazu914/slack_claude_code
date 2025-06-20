@@ -1,0 +1,29 @@
+[project]
+name = "slack-claude-code"
+version = "0.1.0"
+description = "Slack Socket Mode integration with Claude Code Python SDK"
+requires-python = ">=3.11"
+dependencies = [
+    "slack_bolt",
+    "claude-code-sdk", 
+    "requests",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "mypy>=1.0.0",
+    "ruff>=0.12.0",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C", "I"]
