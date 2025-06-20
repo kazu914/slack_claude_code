@@ -45,7 +45,7 @@ CLAUDE_USER_ID = (
 
 
 class SlackSocketMonitor:
-    def __init__(self):
+    def __init__(self) -> None:
         if not SLACK_BOT_TOKEN:
             raise ValueError("SLACK_BOT_TOKEN is required.")
         if not SLACK_APP_TOKEN:
@@ -64,10 +64,10 @@ class SlackSocketMonitor:
 
         self.logger.info("Initialized SlackSocketMonitor")
         self.logger.info(f"Claude User ID: {CLAUDE_USER_ID}")
-        channels_count = len(self.channel_configs.get('channels', {}))
+        channels_count = len(self.channel_configs.get("channels", {}))
         self.logger.info(f"Loaded configurations for {channels_count} channels")
 
-    def _setup_logging(self):
+    def _setup_logging(self) -> None:
         """Setup detailed logging with file output"""
         # Create logs directory if it doesn't exist
         logs_dir = Path("logs")
@@ -109,11 +109,11 @@ class SlackSocketMonitor:
 
         self.logger.info(f"Logging initialized. Log file: {log_file}")
 
-    def setup_event_handlers(self):
+    def setup_event_handlers(self) -> None:
         """Setup Slack event handlers"""
 
         @self.app.event("message")
-        def handle_message(event, say, client):
+        def handle_message(event: Any, say: Any, client: Any) -> None:
             """Handle messages in monitored channels"""
 
             # Skip bot messages
@@ -122,7 +122,7 @@ class SlackSocketMonitor:
 
             asyncio.run(self._handle_message_async(event, say, client))
 
-    async def _handle_message_async(self, event, say, client):
+    async def _handle_message_async(self, event: Any, say: Any, client: Any) -> None:
         """Handle message events asynchronously"""
         try:
             user_id = event.get("user")
@@ -157,8 +157,8 @@ class SlackSocketMonitor:
                 "function": "_handle_message_async",
             }
 
-            error_type = error_details['error_type']
-            error_message = error_details['error_message']
+            error_type = error_details["error_type"]
+            error_message = error_details["error_message"]
             self.logger.error(f"Error handling message: {error_type}: {error_message}")
             self.logger.error(f"Full traceback:\n{error_details['traceback']}")
 
@@ -172,8 +172,8 @@ class SlackSocketMonitor:
                 )
 
     async def _process_with_claude_code(
-        self, client, channel_id: str, thread_ts: str, user_text: str, user_id: str
-    ):
+        self, client: Any, channel_id: str, thread_ts: str, user_text: str, user_id: str
+    ) -> None:
         """Process user request with Claude Code SDK"""
         try:
             # Create system prompt
@@ -245,8 +245,8 @@ class SlackSocketMonitor:
                 "context": f"Channel: {channel_id}, User: {user_id}",
             }
 
-            error_type = error_details['error_type']
-            error_message = error_details['error_message']
+            error_type = error_details["error_type"]
+            error_message = error_details["error_message"]
             self.logger.error(
                 f"Error processing with Claude Code: {error_type}: {error_message}"
             )
@@ -290,7 +290,7 @@ slackに来ているユーザーの指示に従ってください.
             with open("channel_configs.json", "r", encoding="utf-8") as f:
                 configs = json.load(f)
             self.logger.info("Channel configurations loaded successfully")
-            return configs
+            return configs  # type: ignore
         except FileNotFoundError:
             raise FileNotFoundError(
                 "channel_configs.json is required but not found. "
@@ -312,6 +312,30 @@ slackに来ているユーザーの指示に従ってください.
         self.logger.debug(f"Using config for channel {channel_id}: {config}")
         return config
 
+    def _add_optional_options(
+        self, options_dict: Dict[str, Any], config: Dict[str, Any]
+    ) -> None:
+        """Add optional configuration parameters to options dictionary"""
+        optional_params = [
+            "allowed_tools",
+            "max_thinking_tokens",
+            "append_system_prompt",
+            "mcp_tools",
+            "mcp_servers",
+            "continue_conversation",
+            "resume",
+            "max_turns",
+            "disallowed_tools",
+            "model",
+            "permission_prompt_tool_name",
+        ]
+
+        for param in optional_params:
+            if config.get(param) is not None:
+                if param == "append_system_prompt" and not config.get(param):
+                    continue  # Skip empty strings
+                options_dict[param] = config[param]
+
     def _create_claude_code_options(
         self, channel_id: str, system_prompt: str
     ) -> ClaudeCodeOptions:
@@ -329,38 +353,15 @@ slackに来ているユーザーの指示に従ってください.
             )
             raise ValueError(msg)
 
-        # Build options dictionary with non-None values
+        # Build options dictionary with required values
         options_dict = {
             "system_prompt": system_prompt,
             "cwd": Path(config["cwd"]),
             "permission_mode": config["permission_mode"],
         }
 
-        # Add all ClaudeCodeOptions parameters if they are specified
-        if config.get("allowed_tools") is not None:
-            options_dict["allowed_tools"] = config["allowed_tools"]
-        if config.get("max_thinking_tokens") is not None:
-            options_dict["max_thinking_tokens"] = config["max_thinking_tokens"]
-        if config.get("append_system_prompt"):
-            options_dict["append_system_prompt"] = config["append_system_prompt"]
-        if config.get("mcp_tools") is not None:
-            options_dict["mcp_tools"] = config["mcp_tools"]
-        if config.get("mcp_servers") is not None:
-            options_dict["mcp_servers"] = config["mcp_servers"]
-        if config.get("continue_conversation") is not None:
-            options_dict["continue_conversation"] = config["continue_conversation"]
-        if config.get("resume"):
-            options_dict["resume"] = config["resume"]
-        if config.get("max_turns") is not None:
-            options_dict["max_turns"] = config["max_turns"]
-        if config.get("disallowed_tools") is not None:
-            options_dict["disallowed_tools"] = config["disallowed_tools"]
-        if config.get("model"):
-            options_dict["model"] = config["model"]
-        if config.get("permission_prompt_tool_name"):
-            options_dict["permission_prompt_tool_name"] = config[
-                "permission_prompt_tool_name"
-            ]
+        # Add optional parameters
+        self._add_optional_options(options_dict, config)
 
         return ClaudeCodeOptions(**options_dict)
 
@@ -369,8 +370,8 @@ slackに来ているユーザーの指示に従ってください.
         return f"【自動送信】{message}"
 
     async def _send_claude_code_completion_notification(
-        self, client, channel_id: str, thread_ts: str, message_count: int
-    ):
+        self, client: Any, channel_id: str, thread_ts: str, message_count: int
+    ) -> None:
         """Send notification when Claude Code processing is completed"""
         try:
             completion_message = "✅ Claude Code処理が完了しました"
@@ -392,8 +393,8 @@ slackに来ているユーザーの指示に従ってください.
             )
 
     async def _send_thread_reply(
-        self, client, channel_id: str, thread_ts: str, text: str
-    ):
+        self, client: Any, channel_id: str, thread_ts: str, text: str
+    ) -> Any:
         """Send a reply to a Slack thread with auto-send prefix"""
         try:
             # Add auto-send prefix to all messages sent through this function
@@ -409,8 +410,12 @@ slackに来ているユーザーの指示に従ってください.
             self.logger.error(f"Error sending thread reply: {e}")
 
     async def _send_detailed_error_to_slack(
-        self, client, channel_id: str, thread_ts: str, error_details: Dict[str, str]
-    ):
+        self,
+        client: Any,
+        channel_id: str,
+        thread_ts: str,
+        error_details: Dict[str, str],
+    ) -> Any:
         """Send detailed error information to Slack"""
         try:
             # Create a user-friendly error message
@@ -445,8 +450,8 @@ slackに来ているユーザーの指示に従ってください.
             self.logger.error(f"Failed to send detailed error to Slack: {e}")
             # Fallback to simple error message
             try:
-                error_type = error_details['error_type']
-                error_message = error_details['error_message']
+                error_type = error_details["error_type"]
+                error_message = error_details["error_message"]
                 simple_error = f"エラーが発生しました: {error_type} - {error_message}"
                 await self._send_thread_reply(
                     client,
@@ -459,7 +464,7 @@ slackに来ているユーザーの指示に従ってください.
                     f"Failed to send even simple error message: {fallback_error}"
                 )
 
-    def run(self):
+    def run(self) -> None:
         """Start the Socket Mode handler"""
         try:
             self.logger.info("Starting Slack Socket Mode monitor...")
@@ -475,14 +480,14 @@ slackに来ているユーザーの指示に従ってください.
                 "function": "run",
             }
 
-            error_type = error_details['error_type']
-            error_message = error_details['error_message']
+            error_type = error_details["error_type"]
+            error_message = error_details["error_message"]
             self.logger.critical(f"Fatal error: {error_type}: {error_message}")
             self.logger.critical(f"Full traceback:\n{error_details['traceback']}")
             sys.exit(1)
 
 
-def main():
+def main() -> None:
     """Main entry point"""
     try:
         monitor = SlackSocketMonitor()
