@@ -223,8 +223,19 @@ class SlackSocketMonitor:
                 client, channel_id, thread_ts, error_details
             )
         except CLIJSONDecodeError as e:
-            self.logger.error(f"Failed to parse response: {e}")
-            await self._send_thread_reply(client, channel_id, thread_ts, e)
+            error_details = {
+                "error_type": "CLIJSONDecodeError",
+                "error_message": str(e),
+                "traceback": traceback.format_exc(),
+                "function": "_process_with_claude_code",
+                "context": f"Channel: {channel_id}, User: {user_id}",
+            }
+
+            self.logger.error(f"Claude Code JSON parse error: {str(e)}")
+            self.logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            await self._send_detailed_error_to_slack(
+                client, channel_id, thread_ts, error_details
+            )
         except Exception as e:
             error_details = {
                 "error_type": type(e).__name__,
