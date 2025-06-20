@@ -135,7 +135,10 @@ class SlackSocketMonitor:
 
             # Send initial acknowledgment
             await self._send_thread_reply(
-                client, channel_id, thread_ts, "指示を確認しました。処理を開始します..."
+                client,
+                channel_id,
+                thread_ts,
+                "指示を確認しました。処理を開始します...",
             )
 
             # Process the request with Claude Code
@@ -189,6 +192,11 @@ class SlackSocketMonitor:
 
             self.logger.info(
                 f"Claude Code query completed with {len(messages)} messages"
+            )
+
+            # Send completion notification
+            await self._send_claude_code_completion_notification(
+                client, channel_id, thread_ts, len(messages)
             )
 
         except ValueError as e:
@@ -330,14 +338,44 @@ slackに来ているユーザーの指示に従ってください.
 
         return ClaudeCodeOptions(**options_dict)
 
+    def _add_auto_send_prefix(self, message: str) -> str:
+        """Add auto-send prefix to distinguish Python-generated messages from Claude's messages"""
+        return f"【自動送信】{message}"
+
+    async def _send_claude_code_completion_notification(
+        self, client, channel_id: str, thread_ts: str, message_count: int
+    ):
+        """Send notification when Claude Code processing is completed"""
+        try:
+            completion_message = f"✅ Claude Code処理が完了しました"
+
+            await self._send_thread_reply(
+                client,
+                channel_id,
+                thread_ts,
+                completion_message,
+            )
+
+            self.logger.info(
+                f"Claude Code completion notification sent for {message_count} messages"
+            )
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to send Claude Code completion notification: {e}"
+            )
+
     async def _send_thread_reply(
         self, client, channel_id: str, thread_ts: str, text: str
     ):
-        """Send a reply to a Slack thread"""
+        """Send a reply to a Slack thread with auto-send prefix"""
         try:
+            # Add auto-send prefix to all messages sent through this function
+            prefixed_text = self._add_auto_send_prefix(text)
+
             # Use the synchronous client method in async context
             response = client.chat_postMessage(
-                channel=channel_id, thread_ts=thread_ts, text=text
+                channel=channel_id, thread_ts=thread_ts, text=prefixed_text
             )
             self.logger.debug(f"Sent thread reply: {text[:50]}...")
             return response
@@ -364,9 +402,12 @@ slackに来ているユーザーの指示に従ってください.
 詳細なスタックトレースはログファイルに記録されています。
 ログファイル: `logs/slack_monitor_{datetime.now().strftime('%Y%m%d')}.log`"""
 
-            # Send to Slack
-            response = client.chat_postMessage(
-                channel=channel_id, thread_ts=thread_ts, text=error_message
+            # Send to Slack through _send_thread_reply (auto-prefix will be added)
+            response = await self._send_thread_reply(
+                client,
+                channel_id,
+                thread_ts,
+                error_message,
             )
 
             self.logger.info(
@@ -379,8 +420,11 @@ slackに来ているユーザーの指示に従ってください.
             # Fallback to simple error message
             try:
                 simple_error = f"エラーが発生しました: {error_details['error_type']} - {error_details['error_message']}"
-                client.chat_postMessage(
-                    channel=channel_id, thread_ts=thread_ts, text=simple_error
+                await self._send_thread_reply(
+                    client,
+                    channel_id,
+                    thread_ts,
+                    simple_error,
                 )
             except Exception as fallback_error:
                 self.logger.critical(
