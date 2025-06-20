@@ -1,0 +1,26 @@
+{
+  "default": {
+    "cwd": ".",
+    "permission_mode": "bypassPermissions",
+    "allowed_tools": [],
+    "max_thinking_tokens": 8000,
+    "append_system_prompt": null,
+    "mcp_tools": [],
+    "mcp_servers": {},
+    "continue_conversation": false,
+    "resume": null,
+    "max_turns": null,
+    "disallowed_tools": [],
+    "model": null,
+    "permission_prompt_tool_name": null
+  },
+  "channels": {
+    "EXAMPLE_CHANNEL_ID": {
+      "cwd": "/path/to/your/project",
+      "permission_mode": "requestPermissions",
+      "allowed_tools": ["Bash", "Read", "Write", "Edit"],
+      "max_thinking_tokens": 4000,
+      "append_system_prompt": "Additional instructions for this channel"
+    }
+  }
+}
