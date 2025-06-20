@@ -7,7 +7,7 @@ import json
 import logging
 import traceback
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from pathlib import Path
 
 from slack_bolt import App
@@ -60,7 +60,7 @@ class SlackSocketMonitor:
 
         self.setup_event_handlers()
 
-        self.logger.info(f"Initialized SlackSocketMonitor")
+        self.logger.info("Initialized SlackSocketMonitor")
         self.logger.info(f"Claude User ID: {CLAUDE_USER_ID}")
         self.logger.info(
             f"Loaded configurations for {len(self.channel_configs.get('channels', {}))} channels"
@@ -188,6 +188,7 @@ class SlackSocketMonitor:
                 prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
                 options=options,
             ):
+                self.logger.info(message)
                 messages.append(message)
 
             self.logger.info(
@@ -347,7 +348,7 @@ slackに来ているユーザーの指示に従ってください.
     ):
         """Send notification when Claude Code processing is completed"""
         try:
-            completion_message = f"✅ Claude Code処理が完了しました"
+            completion_message = "✅ Claude Code処理が完了しました"
 
             await self._send_thread_reply(
                 client,
