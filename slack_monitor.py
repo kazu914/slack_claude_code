@@ -14,7 +14,7 @@ from claude_code_sdk import ClaudeCodeOptions, CLIJSONDecodeError, Message, quer
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from message_utils import extract_message_text
+from claude_code_message_notifier import ClaudeCodeMessageNotifier
 
 
 def load_env_file(env_file_path: str = ".env") -> Dict[str, str]:
@@ -184,24 +184,37 @@ class SlackSocketMonitor:
             self.logger.info(f"Starting Claude Code query for channel {channel_id}...")
 
             messages: List[Message] = []
+            # Create message notifier to control tools output frequency
+            notifier = ClaudeCodeMessageNotifier()
 
             # Execute Claude Code query
             async for message in query(
                 prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
                 options=options,
             ):
-                # Extract and log only the text content
-                message_text = extract_message_text(message)
-                if message_text:
-                    self.logger.info(f"Claude Code: {message_text}")
-                    await self._send_thread_reply(
-                        client, channel_id, thread_ts, message_text
-                    )
-                else:
+                # Process message with notifier
+                messages_to_send = notifier.process_message(message)
+
+                # Send messages returned by notifier
+                for msg in messages_to_send:
+                    self.logger.info(f"Claude Code: {msg}")
+                    await self._send_thread_reply(client, channel_id, thread_ts, msg)
+
+                # Log metadata messages that were not sent
+                if not messages_to_send:
                     self.logger.debug(
-                        f"Claude Code [metadata]: {type(message).__name__}"
+                        f"Claude Code [tools/metadata]: {type(message).__name__}"
                     )
+
                 messages.append(message)
+
+            # Check for pending tools notification before completion
+            pending_notification = notifier.get_pending_tools_notification()
+            if pending_notification:
+                self.logger.info(f"Claude Code: {pending_notification}")
+                await self._send_thread_reply(
+                    client, channel_id, thread_ts, pending_notification
+                )
 
             # Send completion notification
             await self._send_claude_code_completion_notification(
