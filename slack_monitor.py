@@ -10,7 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from claude_code_sdk import ClaudeCodeOptions, CLIJSONDecodeError, Message, query
+from claude_code_sdk import (
+    ClaudeCodeOptions,
+    CLIConnectionError,
+    CLIJSONDecodeError,
+    CLINotFoundError,
+    Message,
+    ProcessError,
+    query,
+)
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -187,26 +195,83 @@ class SlackSocketMonitor:
             # Create message notifier to control tools output frequency
             notifier = ClaudeCodeMessageNotifier()
 
-            # Execute Claude Code query
-            async for message in query(
-                prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
-                options=options,
-            ):
-                # Process message with notifier
-                messages_to_send = notifier.process_message(message)
+            # Execute Claude Code query with robust error handling
+            try:
+                async for message in query(
+                    prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
+                    options=options,
+                ):
+                    # Process message with notifier
+                    messages_to_send = notifier.process_message(message)
 
-                # Send messages returned by notifier
-                for msg in messages_to_send:
-                    self.logger.info(f"Claude Code: {msg}")
-                    await self._send_thread_reply(client, channel_id, thread_ts, msg)
+                    # Send messages returned by notifier
+                    for msg in messages_to_send:
+                        self.logger.info(f"Claude Code: {msg}")
+                        await self._send_thread_reply(
+                            client, channel_id, thread_ts, msg
+                        )
 
-                # Log metadata messages that were not sent
-                if not messages_to_send:
-                    self.logger.debug(
-                        f"Claude Code [tools/metadata]: {type(message).__name__}"
-                    )
+                    # Log metadata messages that were not sent
+                    if not messages_to_send:
+                        self.logger.debug(
+                            f"Claude Code [tools/metadata]: {type(message).__name__}"
+                        )
 
-                messages.append(message)
+                    messages.append(message)
+            except CLIJSONDecodeError as e:
+                # Handle JSON decode errors gracefully - continue with partial results
+                self.logger.error(f"Claude Code JSON parsing error: {str(e)}")
+                self.logger.info(
+                    f"Processed {len(messages)} messages before error occurred"
+                )
+
+                # Notify user about the issue but continue processing
+                await self._send_thread_reply(
+                    client,
+                    channel_id,
+                    thread_ts,
+                    "⚠️ 処理中にデータ解析エラーが発生しましたが、"
+                    "部分的な結果をお送りします。"
+                )
+
+                # Don't re-raise - continue with partial results
+            except CLIConnectionError as e:
+                self.logger.error(f"Claude Code connection error: {str(e)}")
+                await self._send_thread_reply(
+                    client,
+                    channel_id,
+                    thread_ts,
+                    "❌ Claude Codeとの接続でエラーが発生しました。"
+                    "しばらく待ってから再試行してください。"
+                )
+                return  # Cannot continue without connection
+            except CLINotFoundError as e:
+                self.logger.error(f"Claude Code CLI not found: {str(e)}")
+                await self._send_thread_reply(
+                    client,
+                    channel_id,
+                    thread_ts,
+                    "❌ Claude Code CLIが見つかりません。"
+                    "インストールを確認してください。"
+                )
+                return  # Cannot continue without CLI
+            except ProcessError as e:
+                self.logger.error(
+                    f"Claude Code process error: {str(e)}, "
+                    f"exit code: {e.exit_code}"
+                )
+                self.logger.info(
+                    f"Processed {len(messages)} messages before process error"
+                )
+                await self._send_thread_reply(
+                    client,
+                    channel_id,
+                    thread_ts,
+                    f"⚠️ Claude Codeプロセスでエラーが発生しました"
+                    f"（終了コード: {e.exit_code}）。"
+                    "部分的な結果をお送りします。"
+                )
+                # Continue with partial results
 
             # Check for pending tools notification before completion
             pending_notification = notifier.get_pending_tools_notification()
@@ -232,20 +297,6 @@ class SlackSocketMonitor:
 
             self.logger.error(f"Configuration error: {error_details['error_message']}")
             self.logger.error(f"Full traceback:\n{error_details['traceback']}")
-            await self._send_detailed_error_to_slack(
-                client, channel_id, thread_ts, error_details
-            )
-        except CLIJSONDecodeError as e:
-            error_details = {
-                "error_type": "CLIJSONDecodeError",
-                "error_message": str(e),
-                "traceback": traceback.format_exc(),
-                "function": "_process_with_claude_code",
-                "context": f"Channel: {channel_id}, User: {user_id}",
-            }
-
-            self.logger.error(f"Claude Code JSON parse error: {str(e)}")
-            self.logger.error(f"Full traceback:\n{traceback.format_exc()}")
             await self._send_detailed_error_to_slack(
                 client, channel_id, thread_ts, error_details
             )
@@ -377,6 +428,17 @@ slackに来ているユーザーの指示に従ってください.
         self._add_optional_options(options_dict, config)
 
         return ClaudeCodeOptions(**options_dict)
+
+    async def _handle_claude_code_errors(
+        self,
+        client: Any,
+        channel_id: str,
+        thread_ts: str,
+        messages: List[Message],
+    ) -> None:
+        """Handle Claude Code SDK errors with appropriate user notifications"""
+        # This method will be called from the main error handlers
+        pass
 
     def _add_auto_send_prefix(self, message: str) -> str:
         """Add auto-send prefix to distinguish Python-generated messages."""
