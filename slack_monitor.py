@@ -111,7 +111,7 @@ class SlackSocketMonitor:
         """Process user request with Claude Code SDK"""
         try:
             # Create system prompt
-            system_prompt = self._create_system_prompt(thread_ts, user_id)
+            system_prompt = self._create_system_prompt(thread_ts, user_id, channel_id)
 
             # Configure Claude Code options based on channel configuration
             options = self._create_claude_code_options(channel_id, system_prompt)
@@ -146,20 +146,21 @@ class SlackSocketMonitor:
                 f"Claude Code処理中にエラーが発生しました: {str(e)}",
             )
 
-    def _create_system_prompt(self, thread_ts: str, user_id: str) -> str:
+    def _create_system_prompt(self, thread_ts: str, user_id: str, channel_id: str) -> str:
         """Create system prompt for Claude Code from external file"""
         try:
             with open("system_prompt.md", "r", encoding="utf-8") as f:
                 prompt_template = f.read()
 
             # Replace placeholders
-            return prompt_template.format(thread_ts=thread_ts, user_id=user_id)
+            return prompt_template.format(thread_ts=thread_ts, user_id=user_id, channel_id=channel_id)
         except FileNotFoundError:
             print("Warning: system_prompt.md not found, using fallback prompt")
             return f"""
 slackに来ているユーザーの指示に従ってください.
 対象のスレッドは {thread_ts} です。
 ユーザーID: {user_id}
+チャンネルID: {channel_id}
 """
         except Exception as e:
             print(f"Error loading system prompt: {e}")
@@ -167,6 +168,7 @@ slackに来ているユーザーの指示に従ってください.
 slackに来ているユーザーの指示に従ってください.
 対象のスレッドは {thread_ts} です。
 ユーザーID: {user_id}
+チャンネルID: {channel_id}
 """
 
     def _load_channel_configs(self) -> Dict[str, Any]:
