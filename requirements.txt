@@ -1,8 +1,0 @@
-# Slack Socket Mode Integration
-slack_bolt
-
-# Claude Code Python SDK
-claude-code-sdk
-
-# HTTP requests (if needed for additional API calls)
-requests

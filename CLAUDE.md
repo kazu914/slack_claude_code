@@ -11,26 +11,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `slack_monitor.py`: メインのSocket Mode監視スクリプト
 - `system_prompt.md`: Claude Code用のシステムプロンプト設定
 - `channel_configs.json`: チャンネル別のClaude Code設定
-- `requirements.txt`: Python依存関係
+- `pyproject.toml`: uvプロジェクト設定ファイル（Python依存関係管理）
+- `uv.lock`: uv依存関係ロックファイル
 - `SLACK_SETUP.md`: セットアップ手順書
 - `.env.sample`: 環境変数テンプレート（実際の`.env`ファイルはリポジトリに含まれない）
 
 ## 開発・実行コマンド
 
 ```bash
-# 仮想環境の作成と有効化
-python3 -m venv venv
-source venv/bin/activate
-
-# 依存関係のインストール
-pip install -r requirements.txt
+# 依存関係のインストール（仮想環境を自動作成・管理）
+uv sync
 
 # 環境変数の設定
 cp .env.sample .env
 # .envファイルを編集してトークンを設定
 
-# 実行
-python3 slack_monitor.py
+# 実行（uvが仮想環境を自動管理）
+uv run python slack_monitor.py
+```
+
+### 開発時の追加コマンド
+
+```bash
+# コードの静的解析
+uv run mypy slack_monitor.py
+
+# コードのフォーマット・リント
+uv run ruff check .
+uv run ruff format .
 ```
 
 ## 必要な環境変数
