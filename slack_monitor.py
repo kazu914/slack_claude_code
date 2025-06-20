@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 
-import os
-import sys
 import asyncio
 import json
 import logging
+import os
+import sys
 import traceback
 from datetime import datetime
-from typing import Dict, List, Any
 from pathlib import Path
+from typing import Any, Dict, List
 
+from claude_code_sdk import ClaudeCodeOptions, CLIJSONDecodeError, Message, query
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from claude_code_sdk import query, ClaudeCodeOptions, Message
+
+from message_utils import extract_message_text
 
 
 def load_env_file(env_file_path: str = ".env") -> Dict[str, str]:
@@ -62,9 +64,8 @@ class SlackSocketMonitor:
 
         self.logger.info("Initialized SlackSocketMonitor")
         self.logger.info(f"Claude User ID: {CLAUDE_USER_ID}")
-        self.logger.info(
-            f"Loaded configurations for {len(self.channel_configs.get('channels', {}))} channels"
-        )
+        channels_count = len(self.channel_configs.get('channels', {}))
+        self.logger.info(f"Loaded configurations for {channels_count} channels")
 
     def _setup_logging(self):
         """Setup detailed logging with file output"""
@@ -89,9 +90,11 @@ class SlackSocketMonitor:
         console_handler.setLevel(logging.INFO)
 
         # Detailed formatter for file
-        file_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
+        format_str = (
+            "%(asctime)s - %(name)s - %(levelname)s - "
+            "%(funcName)s:%(lineno)d - %(message)s"
         )
+        file_formatter = logging.Formatter(format_str)
         file_handler.setFormatter(file_formatter)
 
         # Simple formatter for console
@@ -154,9 +157,9 @@ class SlackSocketMonitor:
                 "function": "_handle_message_async",
             }
 
-            self.logger.error(
-                f"Error handling message: {error_details['error_type']}: {error_details['error_message']}"
-            )
+            error_type = error_details['error_type']
+            error_message = error_details['error_message']
+            self.logger.error(f"Error handling message: {error_type}: {error_message}")
             self.logger.error(f"Full traceback:\n{error_details['traceback']}")
 
             if (
@@ -175,7 +178,6 @@ class SlackSocketMonitor:
         try:
             # Create system prompt
             system_prompt = self._create_system_prompt(thread_ts, user_id, channel_id)
-
             # Configure Claude Code options based on channel configuration
             options = self._create_claude_code_options(channel_id, system_prompt)
 
@@ -188,12 +190,18 @@ class SlackSocketMonitor:
                 prompt=f"slackに来ているユーザーの指示に従ってください。\n\nユーザーからの指示:\n{user_text}",
                 options=options,
             ):
-                self.logger.info(message)
+                # Extract and log only the text content
+                message_text = extract_message_text(message)
+                if message_text:
+                    self.logger.info(f"Claude Code: {message_text}")
+                    await self._send_thread_reply(
+                        client, channel_id, thread_ts, message_text
+                    )
+                else:
+                    self.logger.debug(
+                        f"Claude Code [metadata]: {type(message).__name__}"
+                    )
                 messages.append(message)
-
-            self.logger.info(
-                f"Claude Code query completed with {len(messages)} messages"
-            )
 
             # Send completion notification
             await self._send_claude_code_completion_notification(
@@ -214,6 +222,9 @@ class SlackSocketMonitor:
             await self._send_detailed_error_to_slack(
                 client, channel_id, thread_ts, error_details
             )
+        except CLIJSONDecodeError as e:
+            self.logger.error(f"Failed to parse response: {e}")
+            await self._send_thread_reply(client, channel_id, thread_ts, e)
         except Exception as e:
             error_details = {
                 "error_type": type(e).__name__,
@@ -223,8 +234,10 @@ class SlackSocketMonitor:
                 "context": f"Channel: {channel_id}, User: {user_id}",
             }
 
+            error_type = error_details['error_type']
+            error_message = error_details['error_message']
             self.logger.error(
-                f"Error processing with Claude Code: {error_details['error_type']}: {error_details['error_message']}"
+                f"Error processing with Claude Code: {error_type}: {error_message}"
             )
             self.logger.error(f"Full traceback:\n{error_details['traceback']}")
             await self._send_detailed_error_to_slack(
@@ -296,13 +309,14 @@ slackに来ているユーザーの指示に従ってください.
 
         # Validate required configuration values
         if not config.get("cwd"):
-            raise ValueError(
-                f"Missing required 'cwd' configuration for channel {channel_id}"
-            )
+            msg = f"Missing required 'cwd' configuration for channel {channel_id}"
+            raise ValueError(msg)
         if not config.get("permission_mode"):
-            raise ValueError(
-                f"Missing required 'permission_mode' configuration for channel {channel_id}"
+            msg = (
+                f"Missing required 'permission_mode' configuration for "
+                f"channel {channel_id}"
             )
+            raise ValueError(msg)
 
         # Build options dictionary with non-None values
         options_dict = {
@@ -340,7 +354,7 @@ slackに来ているユーザーの指示に従ってください.
         return ClaudeCodeOptions(**options_dict)
 
     def _add_auto_send_prefix(self, message: str) -> str:
-        """Add auto-send prefix to distinguish Python-generated messages from Claude's messages"""
+        """Add auto-send prefix to distinguish Python-generated messages."""
         return f"【自動送信】{message}"
 
     async def _send_claude_code_completion_notification(
@@ -376,7 +390,7 @@ slackに来ているユーザーの指示に従ってください.
 
             # Use the synchronous client method in async context
             response = client.chat_postMessage(
-                channel=channel_id, thread_ts=thread_ts, text=prefixed_text
+                channel=channel_id, thread_ts=thread_ts, text=prefixed_text, mrkdwn=True
             )
             self.logger.debug(f"Sent thread reply: {text[:50]}...")
             return response
@@ -391,17 +405,17 @@ slackに来ているユーザーの指示に従ってください.
             # Create a user-friendly error message
             error_message = f"""🚨 **エラーが発生しました**
 
-**エラータイプ**: {error_details['error_type']}
-**エラーメッセージ**: {error_details['error_message']}
-**発生場所**: {error_details['function']}
+**エラータイプ**: {error_details["error_type"]}
+**エラーメッセージ**: {error_details["error_message"]}
+**発生場所**: {error_details["function"]}
 
 **詳細情報**:
 ```
-{error_details.get('context', 'コンテキスト情報なし')}
+{error_details.get("context", "コンテキスト情報なし")}
 ```
 
 詳細なスタックトレースはログファイルに記録されています。
-ログファイル: `logs/slack_monitor_{datetime.now().strftime('%Y%m%d')}.log`"""
+ログファイル: `logs/slack_monitor_{datetime.now().strftime("%Y%m%d")}.log`"""
 
             # Send to Slack through _send_thread_reply (auto-prefix will be added)
             response = await self._send_thread_reply(
@@ -420,7 +434,9 @@ slackに来ているユーザーの指示に従ってください.
             self.logger.error(f"Failed to send detailed error to Slack: {e}")
             # Fallback to simple error message
             try:
-                simple_error = f"エラーが発生しました: {error_details['error_type']} - {error_details['error_message']}"
+                error_type = error_details['error_type']
+                error_message = error_details['error_message']
+                simple_error = f"エラーが発生しました: {error_type} - {error_message}"
                 await self._send_thread_reply(
                     client,
                     channel_id,
@@ -448,9 +464,9 @@ slackに来ているユーザーの指示に従ってください.
                 "function": "run",
             }
 
-            self.logger.critical(
-                f"Fatal error: {error_details['error_type']}: {error_details['error_message']}"
-            )
+            error_type = error_details['error_type']
+            error_message = error_details['error_message']
+            self.logger.critical(f"Fatal error: {error_type}: {error_message}")
             self.logger.critical(f"Full traceback:\n{error_details['traceback']}")
             sys.exit(1)
 
@@ -477,9 +493,9 @@ def main():
                 f.write(
                     f"{datetime.now().isoformat()} - CRITICAL - main - {error_info}\n"
                 )
-                f.write(
-                    f"{datetime.now().isoformat()} - CRITICAL - main - Traceback:\n{traceback.format_exc()}\n"
-                )
+                timestamp = datetime.now().isoformat()
+                tb = traceback.format_exc()
+                f.write(f"{timestamp} - CRITICAL - main - Traceback:\n{tb}\n")
         except Exception:
             pass  # If logging fails, at least we printed to console
 
