@@ -41,6 +41,15 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+### 改修後の必須チェック
+
+**重要**: コード改修後は必ず以下のコマンドを実行してエラーがないことを確認してください：
+
+```bash
+# slack_monitor.pyの改修後チェック（必須）
+uv tool run ruff check ./slack_monitor.py --fix
+```
+
 ## 必要な環境変数
 
 - `SLACK_BOT_TOKEN`: Slack Bot User OAuth Token (xoxb-)
