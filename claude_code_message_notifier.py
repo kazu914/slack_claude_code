@@ -2,7 +2,8 @@
 """
 Claude Code message notification control class
 
-Controls frequent tool output notifications and sends Slack notifications at appropriate timing
+Controls frequent tool output notifications and sends Slack notifications
+at appropriate timing
 """
 
 from typing import List, Optional
@@ -19,9 +20,11 @@ from message_utils import extract_message_text
 
 class ClaudeCodeMessageNotifier:
     """
-    A class that controls messages from Claude Code and adjusts tool output notification frequency
+    A class that controls messages from Claude Code and adjusts tool output
+    notification frequency
 
-    Tool outputs are not notified immediately, but notifications are sent under these conditions:
+    Tool outputs are not notified immediately, but notifications are sent
+    under these conditions:
     - When non-tool output occurs
     - When tool outputs continue consecutively for 10 times
     """
@@ -75,9 +78,7 @@ class ClaudeCodeMessageNotifier:
 
         return messages_to_send
 
-    def _is_tools_message(
-        self, message: Message, message_text: Optional[str]
-    ) -> bool:
+    def _is_tools_message(self, message: Message, message_text: Optional[str]) -> bool:
         """
         Determine if a message is tool output
 
@@ -98,15 +99,15 @@ class ClaudeCodeMessageNotifier:
                 return True
 
         # If UserMessage has content as list (tool_result, etc.)
-        if hasattr(message, 'content') and isinstance(message.content, list):
+        if hasattr(message, "content") and isinstance(message.content, list):
             return True
 
         # If message text is JSON data
         if message_text and (
-            message_text.strip().startswith('[') or
-            message_text.strip().startswith('{') or
-            '"type":' in message_text or
-            '"tool_use_id":' in message_text
+            message_text.strip().startswith("[")
+            or message_text.strip().startswith("{")
+            or '"type":' in message_text
+            or '"tool_use_id":' in message_text
         ):
             return True
 
@@ -119,7 +120,8 @@ class ClaudeCodeMessageNotifier:
 
     def get_pending_tools_notification(self) -> Optional[str]:
         """
-        Get pending tool notification if available (used when processing is complete, etc.)
+        Get pending tool notification if available
+        (used when processing is complete, etc.)
 
         Returns:
             Optional[str]: Pending tool notification message. None if none exists

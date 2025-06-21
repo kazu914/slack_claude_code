@@ -1,121 +1,51 @@
 #!/usr/bin/env python3
 
 import asyncio
-import json
-import logging
-import os
 import sys
 import traceback
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-from claude_code_sdk import (
-    ClaudeCodeOptions,
-    CLIConnectionError,
-    CLIJSONDecodeError,
-    CLINotFoundError,
-    Message,
-    ProcessError,
-    query,
-)
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from claude_code_message_notifier import ClaudeCodeMessageNotifier
-
-
-def load_env_file(env_file_path: str = ".env") -> Dict[str, str]:
-    """Load environment variables from .env file"""
-    env_vars = {}
-    try:
-        if os.path.exists(env_file_path):
-            with open(env_file_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        env_vars[key.strip()] = value.strip("\"'")
-    except Exception as e:
-        # Use basic logging since the main logger isn't initialized yet
-        logging.warning(f"Could not load .env file: {e}")
-    return env_vars
-
-
-# Load environment variables
-env_vars = load_env_file()
-
-SLACK_BOT_TOKEN = env_vars.get("SLACK_BOT_TOKEN") or os.getenv("SLACK_BOT_TOKEN")
-SLACK_APP_TOKEN = env_vars.get("SLACK_APP_TOKEN") or os.getenv("SLACK_APP_TOKEN")
-CLAUDE_USER_ID = (
-    env_vars.get("CLAUDE_USER_ID") or os.getenv("CLAUDE_USER_ID") or "U0926ED69N0"
-)
+from claude_code_processor import ClaudeCodeProcessor
+from configuration_manager import ConfigurationManager
+from logging_manager import LoggingManager
+from slack_message_handler import SlackMessageHandler
 
 
 class SlackSocketMonitor:
     def __init__(self) -> None:
-        if not SLACK_BOT_TOKEN:
-            raise ValueError("SLACK_BOT_TOKEN is required.")
-        if not SLACK_APP_TOKEN:
-            raise ValueError("SLACK_APP_TOKEN is required.")
+        # Initialize configuration manager
+        self.config_manager = ConfigurationManager()
 
-        # Setup logging
-        self._setup_logging()
+        # Initialize logging manager
+        self.logging_manager = LoggingManager()
+        self.logger = self.logging_manager.get_logger()
+
+        # Initialize message handler
+        self.message_handler = SlackMessageHandler(self.logger)
+
+        # Initialize Claude Code processor
+        self.claude_processor = ClaudeCodeProcessor(
+            self.config_manager, self.message_handler, self.logger
+        )
 
         # Initialize Slack app
-        self.app = App(token=SLACK_BOT_TOKEN)
+        slack_bot_token = self.config_manager.get_slack_bot_token()
+        self.app = App(token=slack_bot_token)
 
-        # Load channel configurations
-        self.channel_configs = self._load_channel_configs()
+        # Get Claude user ID for filtering
+        self.claude_user_id = self.config_manager.get_claude_user_id()
 
         self.setup_event_handlers()
 
-        self.logger.info("Initialized SlackSocketMonitor")
-        self.logger.info(f"Claude User ID: {CLAUDE_USER_ID}")
-        channels_count = len(self.channel_configs.get("channels", {}))
-        self.logger.info(f"Loaded configurations for {channels_count} channels")
-
-    def _setup_logging(self) -> None:
-        """Setup detailed logging with file output"""
-        # Create logs directory if it doesn't exist
-        logs_dir = Path("logs")
-        logs_dir.mkdir(exist_ok=True)
-
-        # Configure logger
-        self.logger = logging.getLogger("slack_claude_monitor")
-        self.logger.setLevel(logging.DEBUG)
-
-        # Remove existing handlers to avoid duplicates
-        self.logger.handlers.clear()
-
-        # File handler for detailed logs
-        log_file = logs_dir / f"slack_monitor_{datetime.now().strftime('%Y%m%d')}.log"
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
-
-        # Console handler for basic info
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-
-        # Detailed formatter for file
-        format_str = (
-            "%(asctime)s - %(name)s - %(levelname)s - "
-            "%(funcName)s:%(lineno)d - %(message)s"
+        # Log initialization info
+        channels_count = self.config_manager.get_channels_count()
+        self.logging_manager.log_initialization_info(
+            self.claude_user_id, channels_count
         )
-        file_formatter = logging.Formatter(format_str)
-        file_handler.setFormatter(file_formatter)
-
-        # Simple formatter for console
-        console_formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s"
-        )
-        console_handler.setFormatter(console_formatter)
-
-        # Add handlers
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-
-        self.logger.info(f"Logging initialized. Log file: {log_file}")
 
     def setup_event_handlers(self) -> None:
         """Setup Slack event handlers"""
@@ -125,7 +55,7 @@ class SlackSocketMonitor:
             """Handle messages in monitored channels"""
 
             # Skip bot messages
-            if event.get("bot_id") or event.get("user") == CLAUDE_USER_ID:
+            if event.get("bot_id") or event.get("user") == self.claude_user_id:
                 return
 
             asyncio.run(self._handle_message_async(event, say, client))
@@ -138,32 +68,25 @@ class SlackSocketMonitor:
             thread_ts = event.get("thread_ts") or event.get("ts")
             text = event.get("text", "")
 
-            self.logger.info(
-                f"Message detected from user {user_id} in channel {channel_id}"
+            # Log message details
+            self.message_handler.log_message_details(
+                user_id, channel_id, thread_ts, text
             )
-            self.logger.info(f"Thread TS: {thread_ts}")
-            self.logger.debug(f"Message: {text}")
 
             # Send initial acknowledgment
-            await self._send_thread_reply(
-                client,
-                channel_id,
-                thread_ts,
-                "Instructions confirmed. Starting processing...",
+            await self.message_handler.send_initial_acknowledgment(
+                client, channel_id, thread_ts
             )
 
             # Process the request with Claude Code
-            await self._process_with_claude_code(
+            await self.claude_processor.process_with_claude_code(
                 client, channel_id, thread_ts, text, user_id
             )
 
         except Exception as e:
-            error_details = {
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-                "traceback": traceback.format_exc(),
-                "function": "_handle_message_async",
-            }
+            error_details = self.message_handler.create_error_details(
+                e, "_handle_message_async"
+            )
 
             error_type = error_details["error_type"]
             error_message = error_details["error_message"]
@@ -175,385 +98,21 @@ class SlackSocketMonitor:
                 and "channel_id" in locals()
                 and "thread_ts" in locals()
             ):
-                await self._send_detailed_error_to_slack(
+                await self.message_handler.send_detailed_error_to_slack(
                     client, channel_id, thread_ts, error_details
-                )
-
-    async def _process_with_claude_code(
-        self, client: Any, channel_id: str, thread_ts: str, user_text: str, user_id: str
-    ) -> None:
-        """Process user request with Claude Code SDK"""
-        try:
-            # Create system prompt
-            system_prompt = self._create_system_prompt(thread_ts, user_id, channel_id)
-            # Configure Claude Code options based on channel configuration
-            options = self._create_claude_code_options(channel_id, system_prompt)
-
-            self.logger.info(f"Starting Claude Code query for channel {channel_id}...")
-
-            messages: List[Message] = []
-            # Create message notifier to control tools output frequency
-            notifier = ClaudeCodeMessageNotifier()
-
-            # Execute Claude Code query with robust error handling
-            try:
-                async for message in query(
-                    prompt=f"Follow the user instructions received in Slack.\n\nUser instructions:\n{user_text}",
-                    options=options,
-                ):
-                    # Process message with notifier
-                    messages_to_send = notifier.process_message(message)
-
-                    # Send messages returned by notifier
-                    for msg in messages_to_send:
-                        self.logger.info(f"Claude Code: {msg}")
-                        await self._send_thread_reply(
-                            client, channel_id, thread_ts, msg
-                        )
-
-                    # Log metadata messages that were not sent
-                    if not messages_to_send:
-                        self.logger.debug(
-                            f"Claude Code [tools/metadata]: {type(message).__name__}"
-                        )
-
-                    messages.append(message)
-            except CLIJSONDecodeError as e:
-                # Handle JSON decode errors gracefully - continue with partial results
-                self.logger.error(f"Claude Code JSON parsing error: {str(e)}")
-                self.logger.info(
-                    f"Processed {len(messages)} messages before error occurred"
-                )
-
-                # Notify user about the issue but continue processing
-                await self._send_thread_reply(
-                    client,
-                    channel_id,
-                    thread_ts,
-                    "⚠️ A data parsing error occurred during processing, "
-                    "but partial results will be provided."
-                )
-
-                # Don't re-raise - continue with partial results
-            except CLIConnectionError as e:
-                self.logger.error(f"Claude Code connection error: {str(e)}")
-                await self._send_thread_reply(
-                    client,
-                    channel_id,
-                    thread_ts,
-                    "❌ An error occurred connecting to Claude Code. "
-                    "Please wait and try again."
-                )
-                return  # Cannot continue without connection
-            except CLINotFoundError as e:
-                self.logger.error(f"Claude Code CLI not found: {str(e)}")
-                await self._send_thread_reply(
-                    client,
-                    channel_id,
-                    thread_ts,
-                    "❌ Claude Code CLI not found. "
-                    "Please check the installation."
-                )
-                return  # Cannot continue without CLI
-            except ProcessError as e:
-                self.logger.error(
-                    f"Claude Code process error: {str(e)}, "
-                    f"exit code: {e.exit_code}"
-                )
-                self.logger.info(
-                    f"Processed {len(messages)} messages before process error"
-                )
-                await self._send_thread_reply(
-                    client,
-                    channel_id,
-                    thread_ts,
-                    f"⚠️ An error occurred in the Claude Code process "
-                    f"(exit code: {e.exit_code}). "
-                    "Partial results will be provided."
-                )
-                # Continue with partial results
-
-            # Check for pending tools notification before completion
-            pending_notification = notifier.get_pending_tools_notification()
-            if pending_notification:
-                self.logger.info(f"Claude Code: {pending_notification}")
-                await self._send_thread_reply(
-                    client, channel_id, thread_ts, pending_notification
-                )
-
-            # Send completion notification
-            await self._send_claude_code_completion_notification(
-                client, channel_id, thread_ts, len(messages)
-            )
-
-        except ValueError as e:
-            error_details = {
-                "error_type": "Configuration Error",
-                "error_message": str(e),
-                "traceback": traceback.format_exc(),
-                "function": "_process_with_claude_code",
-                "context": f"Channel: {channel_id}, User: {user_id}",
-            }
-
-            self.logger.error(f"Configuration error: {error_details['error_message']}")
-            self.logger.error(f"Full traceback:\n{error_details['traceback']}")
-            await self._send_detailed_error_to_slack(
-                client, channel_id, thread_ts, error_details
-            )
-        except Exception as e:
-            error_details = {
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-                "traceback": traceback.format_exc(),
-                "function": "_process_with_claude_code",
-                "context": f"Channel: {channel_id}, User: {user_id}",
-            }
-
-            error_type = error_details["error_type"]
-            error_message = error_details["error_message"]
-            self.logger.error(
-                f"Error processing with Claude Code: {error_type}: {error_message}"
-            )
-            self.logger.error(f"Full traceback:\n{error_details['traceback']}")
-            await self._send_detailed_error_to_slack(
-                client, channel_id, thread_ts, error_details
-            )
-
-    def _create_system_prompt(
-        self, thread_ts: str, user_id: str, channel_id: str
-    ) -> str:
-        """Create system prompt for Claude Code from external file"""
-        try:
-            with open("system_prompt.md", "r", encoding="utf-8") as f:
-                prompt_template = f.read()
-
-            # Replace placeholders
-            return prompt_template.format(
-                thread_ts=thread_ts, user_id=user_id, channel_id=channel_id
-            )
-        except FileNotFoundError:
-            self.logger.warning("system_prompt.md not found, using fallback prompt")
-            return f"""
-Follow the user instructions received in Slack.
-Target thread is {thread_ts}.
-User ID: {user_id}
-Channel ID: {channel_id}
-"""
-        except Exception as e:
-            self.logger.error(f"Error loading system prompt: {e}")
-            return f"""
-Follow the user instructions received in Slack.
-Target thread is {thread_ts}.
-User ID: {user_id}
-Channel ID: {channel_id}
-"""
-
-    def _load_channel_configs(self) -> Dict[str, Any]:
-        """Load channel configurations from JSON file"""
-        try:
-            with open("channel_configs.json", "r", encoding="utf-8") as f:
-                configs = json.load(f)
-            self.logger.info("Channel configurations loaded successfully")
-            return configs  # type: ignore
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                "channel_configs.json is required but not found. "
-                "Please create the configuration file before starting the application."
-            )
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Error parsing channel_configs.json: {e}")
-        except Exception as e:
-            raise RuntimeError(f"Error loading channel configurations: {e}")
-
-    def _get_channel_config(self, channel_id: str) -> Dict[str, Any]:
-        """Get configuration for a specific channel"""
-        default_config = self.channel_configs.get("default", {})
-        channel_specific = self.channel_configs.get("channels", {}).get(channel_id, {})
-
-        # Merge configurations (channel-specific overrides default)
-        config = {**default_config, **channel_specific}
-
-        self.logger.debug(f"Using config for channel {channel_id}: {config}")
-        return config
-
-    def _add_optional_options(
-        self, options_dict: Dict[str, Any], config: Dict[str, Any]
-    ) -> None:
-        """Add optional configuration parameters to options dictionary"""
-        optional_params = [
-            "allowed_tools",
-            "max_thinking_tokens",
-            "append_system_prompt",
-            "mcp_tools",
-            "mcp_servers",
-            "continue_conversation",
-            "resume",
-            "max_turns",
-            "disallowed_tools",
-            "model",
-            "permission_prompt_tool_name",
-        ]
-
-        for param in optional_params:
-            if config.get(param) is not None:
-                if param == "append_system_prompt" and not config.get(param):
-                    continue  # Skip empty strings
-                options_dict[param] = config[param]
-
-    def _create_claude_code_options(
-        self, channel_id: str, system_prompt: str
-    ) -> ClaudeCodeOptions:
-        """Create ClaudeCodeOptions based on channel configuration"""
-        config = self._get_channel_config(channel_id)
-
-        # Validate required configuration values
-        if not config.get("cwd"):
-            msg = f"Missing required 'cwd' configuration for channel {channel_id}"
-            raise ValueError(msg)
-        if not config.get("permission_mode"):
-            msg = (
-                f"Missing required 'permission_mode' configuration for "
-                f"channel {channel_id}"
-            )
-            raise ValueError(msg)
-
-        # Build options dictionary with required values
-        options_dict = {
-            "system_prompt": system_prompt,
-            "cwd": Path(config["cwd"]),
-            "permission_mode": config["permission_mode"],
-        }
-
-        # Add optional parameters
-        self._add_optional_options(options_dict, config)
-
-        return ClaudeCodeOptions(**options_dict)
-
-    async def _handle_claude_code_errors(
-        self,
-        client: Any,
-        channel_id: str,
-        thread_ts: str,
-        messages: List[Message],
-    ) -> None:
-        """Handle Claude Code SDK errors with appropriate user notifications"""
-        # This method will be called from the main error handlers
-        pass
-
-    def _add_auto_send_prefix(self, message: str) -> str:
-        """Add auto-send prefix to distinguish Python-generated messages."""
-        return f"[Auto-sent] {message}"
-
-    async def _send_claude_code_completion_notification(
-        self, client: Any, channel_id: str, thread_ts: str, message_count: int
-    ) -> None:
-        """Send notification when Claude Code processing is completed"""
-        try:
-            completion_message = "✅ Claude Code processing completed"
-
-            await self._send_thread_reply(
-                client,
-                channel_id,
-                thread_ts,
-                completion_message,
-            )
-
-            self.logger.info(
-                f"Claude Code completion notification sent for {message_count} messages"
-            )
-
-        except Exception as e:
-            self.logger.error(
-                f"Failed to send Claude Code completion notification: {e}"
-            )
-
-    async def _send_thread_reply(
-        self, client: Any, channel_id: str, thread_ts: str, text: str
-    ) -> Any:
-        """Send a reply to a Slack thread with auto-send prefix"""
-        try:
-            # Add auto-send prefix to all messages sent through this function
-            prefixed_text = self._add_auto_send_prefix(text)
-
-            # Use the synchronous client method in async context
-            response = client.chat_postMessage(
-                channel=channel_id, thread_ts=thread_ts, text=prefixed_text, mrkdwn=True
-            )
-            self.logger.debug(f"Sent thread reply: {text[:50]}...")
-            return response
-        except Exception as e:
-            self.logger.error(f"Error sending thread reply: {e}")
-
-    async def _send_detailed_error_to_slack(
-        self,
-        client: Any,
-        channel_id: str,
-        thread_ts: str,
-        error_details: Dict[str, str],
-    ) -> Any:
-        """Send detailed error information to Slack"""
-        try:
-            # Create a user-friendly error message
-            error_message = f"""🚨 **An error occurred**
-
-**Error Type**: {error_details["error_type"]}
-**Error Message**: {error_details["error_message"]}
-**Location**: {error_details["function"]}
-
-**Details**:
-```
-{error_details.get("context", "No context information available")}
-```
-
-Detailed stack trace has been logged to the log file.
-Log file: `logs/slack_monitor_{datetime.now().strftime("%Y%m%d")}.log`"""
-
-            # Send to Slack through _send_thread_reply (auto-prefix will be added)
-            response = await self._send_thread_reply(
-                client,
-                channel_id,
-                thread_ts,
-                error_message,
-            )
-
-            self.logger.info(
-                f"Detailed error sent to Slack: {error_details['error_type']}"
-            )
-            return response
-
-        except Exception as e:
-            self.logger.error(f"Failed to send detailed error to Slack: {e}")
-            # Fallback to simple error message
-            try:
-                error_type = error_details["error_type"]
-                error_message = error_details["error_message"]
-                simple_error = f"An error occurred: {error_type} - {error_message}"
-                await self._send_thread_reply(
-                    client,
-                    channel_id,
-                    thread_ts,
-                    simple_error,
-                )
-            except Exception as fallback_error:
-                self.logger.critical(
-                    f"Failed to send even simple error message: {fallback_error}"
                 )
 
     def run(self) -> None:
         """Start the Socket Mode handler"""
         try:
             self.logger.info("Starting Slack Socket Mode monitor...")
-            handler = SocketModeHandler(self.app, SLACK_APP_TOKEN)
+            slack_app_token = self.config_manager.get_slack_app_token()
+            handler = SocketModeHandler(self.app, slack_app_token)
             handler.start()
         except KeyboardInterrupt:
             self.logger.info("Monitoring interrupted by user")
         except Exception as e:
-            error_details = {
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-                "traceback": traceback.format_exc(),
-                "function": "run",
-            }
+            error_details = self.message_handler.create_error_details(e, "run")
 
             error_type = error_details["error_type"]
             error_message = error_details["error_message"]
@@ -570,21 +129,16 @@ def main() -> None:
     except Exception as e:
         # Basic logging for initialization errors since logger might not be set up yet
         error_info = f"Initialization error: {type(e).__name__}: {str(e)}"
-        logging.critical(error_info)
+        print(error_info)
 
         # Try to log to file if possible
         try:
-            logs_dir = Path("logs")
-            logs_dir.mkdir(exist_ok=True)
-            log_file = (
-                logs_dir / f"slack_monitor_{datetime.now().strftime('%Y%m%d')}.log"
-            )
+            logging_manager = LoggingManager()
+            current_log_file = logging_manager.get_current_log_file()
 
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(
-                    f"{datetime.now().isoformat()} - CRITICAL - main - {error_info}\n"
-                )
-                timestamp = datetime.now().isoformat()
+            with open(current_log_file, "a", encoding="utf-8") as f:
+                timestamp = f"{datetime.now().isoformat()}"
+                f.write(f"{timestamp} - CRITICAL - main - {error_info}\n")
                 tb = traceback.format_exc()
                 f.write(f"{timestamp} - CRITICAL - main - Traceback:\n{tb}\n")
         except Exception:

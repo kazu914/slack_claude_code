@@ -6,7 +6,7 @@ Claude Code SDK Messageオブジェクトの構造調査とテキスト抽出テ
 import asyncio
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from claude_code_sdk import ClaudeCodeOptions, Message, query
 from claude_code_sdk.types import (
@@ -30,58 +30,137 @@ def extract_text_from_message(message: Message) -> Optional[str]:
     Returns:
         抽出されたテキスト文字列。テキストが含まれていない場合はNone
     """
-
     if isinstance(message, UserMessage):
-        # UserMessageの場合、直接contentフィールドにテキストが含まれている
-        # ただし、contentがlistの場合もあるため、適切に処理する
-        if isinstance(message.content, str):
-            return message.content
-        elif isinstance(message.content, list):
-            return json.dumps(message.content, ensure_ascii=False)
-        else:
-            return str(message.content)
-
+        return _extract_user_message_content(message)
     elif isinstance(message, AssistantMessage):
-        # AssistantMessageの場合、contentはContentBlockのリスト
-        text_parts = []
-
-        for content_block in message.content:
-            if isinstance(content_block, TextBlock):
-                # TextBlockの場合、textフィールドにテキストが含まれている
-                text_parts.append(content_block.text)
-            elif isinstance(content_block, ToolUseBlock):
-                # ToolUseBlockの場合、ツール使用の情報を文字列化
-                tool_info = f"[Tool: {content_block.name}({content_block.id})]"
-                text_parts.append(tool_info)
-            elif isinstance(content_block, ToolResultBlock):
-                # ToolResultBlockの場合、結果の内容を取得
-                if content_block.content:
-                    if isinstance(content_block.content, str):
-                        text_parts.append(f"[Tool Result: {content_block.content}]")
-                    else:
-                        text_parts.append(
-                            f"[Tool Result: {json.dumps(content_block.content)}]"
-                        )
-
-        return "\n".join(text_parts) if text_parts else None
-
+        return _extract_assistant_message_content(message)
     elif isinstance(message, SystemMessage):
-        # SystemMessageの場合、dataフィールドから情報を抽出
-        return f"[System: {message.subtype}] {json.dumps(message.data)}"
-
+        return _extract_system_message_content(message)
     elif isinstance(message, ResultMessage):
-        # ResultMessageの場合、resultフィールドまたは基本情報を返す
-        if message.result:
-            return message.result
-        else:
-            return (
-                f"[Result: {message.subtype}, Duration: {message.duration_ms}ms, "
-                f"Turns: {message.num_turns}]"
-            )
-
+        return _extract_result_message_content(message)
     else:
-        # 未知のMessageタイプの場合
-        return f"[Unknown Message Type: {type(message).__name__}]"
+        return _extract_unknown_message_content(message)
+
+
+def _extract_user_message_content(message: UserMessage) -> Optional[str]:
+    """
+    UserMessageからテキストを抽出
+
+    Args:
+        message: UserMessage object
+
+    Returns:
+        抽出されたテキスト
+    """
+    if isinstance(message.content, str):
+        return message.content
+    elif isinstance(message.content, list):
+        return json.dumps(message.content, ensure_ascii=False)
+    else:
+        return str(message.content)
+
+
+def _extract_assistant_message_content(message: AssistantMessage) -> Optional[str]:
+    """
+    AssistantMessageからテキストを抽出
+
+    Args:
+        message: AssistantMessage object
+
+    Returns:
+        抽出されたテキスト
+    """
+    text_parts = []
+
+    for content_block in message.content:
+        block_text = _extract_content_block(content_block)
+        if block_text:
+            text_parts.append(block_text)
+
+    return "\n".join(text_parts) if text_parts else None
+
+
+def _extract_content_block(content_block: Any) -> Optional[str]:
+    """
+    コンテンツブロックからテキストを抽出
+
+    Args:
+        content_block: コンテンツブロック
+
+    Returns:
+        抽出されたテキスト
+    """
+    if isinstance(content_block, TextBlock):
+        return content_block.text
+    elif isinstance(content_block, ToolUseBlock):
+        return f"[Tool: {content_block.name}({content_block.id})]"
+    elif isinstance(content_block, ToolResultBlock):
+        return _extract_tool_result_content(content_block)
+    return None
+
+
+def _extract_tool_result_content(content_block: ToolResultBlock) -> Optional[str]:
+    """
+    ToolResultBlockからテキストを抽出
+
+    Args:
+        content_block: ToolResultBlock
+
+    Returns:
+        抽出されたテキスト
+    """
+    if not content_block.content:
+        return None
+
+    if isinstance(content_block.content, str):
+        return f"[Tool Result: {content_block.content}]"
+    else:
+        return f"[Tool Result: {json.dumps(content_block.content)}]"
+
+
+def _extract_system_message_content(message: SystemMessage) -> str:
+    """
+    SystemMessageからテキストを抽出
+
+    Args:
+        message: SystemMessage object
+
+    Returns:
+        抽出されたテキスト
+    """
+    return f"[System: {message.subtype}] {json.dumps(message.data)}"
+
+
+def _extract_result_message_content(message: ResultMessage) -> str:
+    """
+    ResultMessageからテキストを抽出
+
+    Args:
+        message: ResultMessage object
+
+    Returns:
+        抽出されたテキスト
+    """
+    if message.result:
+        return message.result
+    else:
+        return (
+            f"[Result: {message.subtype}, Duration: {message.duration_ms}ms, "
+            f"Turns: {message.num_turns}]"
+        )
+
+
+def _extract_unknown_message_content(message: Message) -> str:
+    """
+    未知のメッセージタイプからテキストを抽出
+
+    Args:
+        message: Message object
+
+    Returns:
+        抽出されたテキスト
+    """
+    return f"[Unknown Message Type: {type(message).__name__}]"
 
 
 def analyze_message_structure(message: Message) -> dict:
@@ -94,7 +173,6 @@ def analyze_message_structure(message: Message) -> dict:
     Returns:
         メッセージの構造情報を含む辞書
     """
-
     analysis = {
         "message_type": type(message).__name__,
         "attributes": {},
@@ -102,22 +180,45 @@ def analyze_message_structure(message: Message) -> dict:
     }
 
     # 各属性を詳細に分析
-    for attr_name in dir(message):
-        if not attr_name.startswith("_"):  # プライベート属性は除外
-            try:
-                attr_value = getattr(message, attr_name)
-                if not callable(attr_value):  # メソッドは除外
-                    analysis["attributes"][attr_name] = {
-                        "type": type(attr_value).__name__,
-                        "value": attr_value,
-                    }
-            except Exception as e:
-                analysis["attributes"][attr_name] = {"error": str(e)}
+    _analyze_message_attributes(message, analysis)
 
     return analysis
 
 
-async def test_message_structure():
+def _analyze_message_attributes(message: Message, analysis: dict) -> None:
+    """
+    メッセージの属性を分析
+
+    Args:
+        message: Message object
+        analysis: 分析結果を格納する辞書
+    """
+    for attr_name in dir(message):
+        if not attr_name.startswith("_"):  # プライベート属性は除外
+            _analyze_single_attribute(message, attr_name, analysis)
+
+
+def _analyze_single_attribute(message: Message, attr_name: str, analysis: dict) -> None:
+    """
+    単一の属性を分析
+
+    Args:
+        message: Message object
+        attr_name: 属性名
+        analysis: 分析結果を格納する辞書
+    """
+    try:
+        attr_value = getattr(message, attr_name)
+        if not callable(attr_value):  # メソッドは除外
+            analysis["attributes"][attr_name] = {
+                "type": type(attr_value).__name__,
+                "value": attr_value,
+            }
+    except Exception as e:
+        analysis["attributes"][attr_name] = {"error": str(e)}
+
+
+async def test_message_structure() -> None:
     """
     簡単なクエリを実行してMessageオブジェクトの構造をテストする
     """
@@ -167,7 +268,7 @@ async def test_message_structure():
     print(f"合計 {message_count} 個のメッセージを受信しました。")
 
 
-async def demonstrate_text_extraction():
+async def demonstrate_text_extraction() -> None:
     """
     実際のユースケースでのテキスト抽出のデモンストレーション
     """
